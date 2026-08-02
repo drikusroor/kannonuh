@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="theme-color" content="#1b1710" />
+    <title>Kannonuh — siege artillery duel</title>
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%8F%B0%3C/text%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <canvas id="stage"></canvas>
+
+    <!-- ================= In-battle HUD ================= -->
+    <div id="hud" class="hidden">
+      <header class="topbar">
+        <div class="team team-0" id="team-0">
+          <div class="team-name"><span class="dot"></span><span data-name>Red</span></div>
+          <div class="king-bar"><i data-king></i><span data-kinghp>320</span></div>
+          <div class="team-meta"><span data-credits>0</span> ⛃ · <span data-guns>2</span> guns</div>
+        </div>
+
+        <div class="centre">
+          <div class="turn-line">
+            <span id="turn-label">Your volley</span>
+            <span id="turn-clock">1:30</span>
+          </div>
+          <div class="wind">
+            <span class="wind-label">WIND</span>
+            <div class="wind-gauge"><i id="wind-needle"></i></div>
+            <span id="wind-value">calm</span>
+          </div>
+          <div class="shots" id="shots-left"></div>
+        </div>
+
+        <div class="team team-1" id="team-1">
+          <div class="team-name"><span data-name>Blue</span><span class="dot"></span></div>
+          <div class="king-bar"><span data-kinghp>320</span><i data-king></i></div>
+          <div class="team-meta"><span data-guns>2</span> guns · <span data-credits>0</span> ⛃</div>
+        </div>
+      </header>
+
+      <div id="emote-layer"></div>
+      <div id="toasts"></div>
+
+      <div id="banner" class="hidden"><span></span></div>
+
+      <footer class="controls">
+        <div class="panel guns">
+          <h4>Battery</h4>
+          <div id="gun-list"></div>
+        </div>
+
+        <div class="panel aiming">
+          <div class="dials">
+            <div class="dial">
+              <label>Elevation</label>
+              <div class="dial-value"><button data-nudge="elev" data-delta="-1">−</button><span id="elev-value">45.0°</span><button data-nudge="elev" data-delta="1">+</button></div>
+              <input id="elev-slider" type="range" min="0" max="89" step="0.5" value="45" />
+            </div>
+            <div class="dial">
+              <label>Powder charge</label>
+              <div class="dial-value"><button data-nudge="power" data-delta="-1">−</button><span id="power-value">60</span><button data-nudge="power" data-delta="1">+</button></div>
+              <input id="power-slider" type="range" min="5" max="100" step="1" value="60" />
+              <div class="power-meter"><i id="power-fill"></i></div>
+            </div>
+          </div>
+          <button id="fire-btn" class="fire">FIRE<small>space</small></button>
+        </div>
+
+        <div class="panel ammo">
+          <h4>Magazine</h4>
+          <div id="ammo-list"></div>
+          <div class="row">
+            <button id="shop-btn" class="ghost">⚒ Quartermaster</button>
+            <button id="endturn-btn" class="ghost">End volley</button>
+          </div>
+        </div>
+      </footer>
+
+      <div class="side-tools">
+        <button id="chat-btn" class="tool" title="Chat">💬</button>
+        <button id="emote-btn" class="tool" title="Taunt">😀</button>
+        <button id="sound-btn" class="tool" title="Sound">🔊</button>
+        <button id="music-btn" class="tool" title="Music">🎵</button>
+        <button id="zoom-btn" class="tool" title="Fit battlefield">🔭</button>
+        <button id="resign-btn" class="tool" title="Strike the colours">🏳</button>
+        <button id="help-btn" class="tool" title="How to play">?</button>
+      </div>
+
+      <div id="emote-picker" class="hidden"></div>
+
+      <div id="chat" class="hidden">
+        <div id="chat-log"></div>
+        <form id="chat-form"><input id="chat-input" maxlength="200" placeholder="Say something…" autocomplete="off" /></form>
+      </div>
+    </div>
+
+    <!-- ================= Quartermaster ================= -->
+    <div id="shop" class="modal hidden">
+      <div class="modal-card wide">
+        <header>
+          <h2>Quartermaster</h2>
+          <div class="purse"><span id="shop-credits">0</span> credits</div>
+          <button class="close" data-close="shop">✕</button>
+        </header>
+        <nav class="tabs">
+          <button class="tab active" data-tab="ammo">Ammunition</button>
+          <button class="tab" data-tab="cannons">Ordnance</button>
+          <button class="tab" data-tab="upgrades">Upgrades</button>
+          <button class="tab" data-tab="build">Fortify</button>
+        </nav>
+        <div class="tab-body" id="tab-ammo"></div>
+        <div class="tab-body hidden" id="tab-cannons"></div>
+        <div class="tab-body hidden" id="tab-upgrades"></div>
+        <div class="tab-body hidden" id="tab-build"></div>
+        <footer class="hint" id="shop-hint">Purchases are made on your own turn.</footer>
+      </div>
+    </div>
+
+    <!-- ================= Placement mode ================= -->
+    <div id="placing" class="hidden">
+      <span id="placing-label">Choose a spot on your half</span>
+      <button id="placing-cancel" class="ghost">Cancel</button>
+    </div>
+
+    <!-- ================= Menu / lobby ================= -->
+    <div id="menu" class="modal">
+      <div class="modal-card">
+        <div class="crest">⚔</div>
+        <h1>KANNONUH</h1>
+        <p class="tagline">Two fortresses. One horizon. Bring the king down.</p>
+
+        <label class="field">
+          <span>Your name</span>
+          <input id="name-input" maxlength="20" placeholder="Gunner" autocomplete="off" />
+        </label>
+
+        <div class="menu-grid">
+          <button id="menu-practice" class="primary">⚔ Practice siege<small>play the gunnery master</small></button>
+          <button id="menu-create" class="primary">🏰 Create battle<small>invite a friend by code</small></button>
+          <button id="menu-quick" class="primary">⚡ Quick match<small>find anyone waiting</small></button>
+        </div>
+
+        <div class="difficulty" id="difficulty">
+          <span>Opponent</span>
+          <button data-diff="0">Recruit</button>
+          <button data-diff="1" class="active">Gunner</button>
+          <button data-diff="2">Master</button>
+        </div>
+
+        <form id="join-form" class="join">
+          <input id="join-code" maxlength="6" placeholder="CODE" autocomplete="off" />
+          <button type="submit">Join</button>
+        </form>
+
+        <p class="fineprint">Tip: drag from your cannon to aim, or use the dials. Space fires.</p>
+      </div>
+    </div>
+
+    <div id="lobby" class="modal hidden">
+      <div class="modal-card">
+        <h2>War council</h2>
+        <p class="code-line">Battle code <b id="lobby-code">····</b><button id="copy-code" class="ghost small">copy</button></p>
+        <div id="lobby-seats"></div>
+        <div class="row centre-row">
+          <button id="lobby-ready" class="primary">I am ready</button>
+          <button id="lobby-leave" class="ghost">Leave</button>
+        </div>
+        <p class="fineprint" id="lobby-hint">Waiting for a challenger…</p>
+      </div>
+    </div>
+
+    <!-- ================= After action ================= -->
+    <div id="over" class="modal hidden">
+      <div class="modal-card wide">
+        <h2 id="over-title">Victory</h2>
+        <p id="over-sub" class="tagline"></p>
+        <div id="over-scores" class="scores"></div>
+        <table id="over-stats" class="stats"></table>
+        <div class="row centre-row">
+          <button id="over-rematch" class="primary">Rematch</button>
+          <button id="over-leave" class="ghost">Back to camp</button>
+        </div>
+        <p class="fineprint" id="over-votes"></p>
+      </div>
+    </div>
+
+    <!-- ================= Help ================= -->
+    <div id="help" class="modal hidden">
+      <div class="modal-card">
+        <header><h2>How to lay siege</h2><button class="close" data-close="help">✕</button></header>
+        <ul class="help-list">
+          <li><b>Aim</b> by dragging from your gun, or with the elevation and powder dials. Arrow keys nudge; hold shift for fine steps.</li>
+          <li><b>Wind</b> pushes light shot around. Heavy bombs care less about it.</li>
+          <li><b>Every gun</b> may fire once per volley, up to three shots a turn.</li>
+          <li><b>Credits</b> come from damage and kills. Spend them on shells, guns, upgrades and walls at the Quartermaster.</li>
+          <li><b>Powder barrels</b> chain-detonate. Look for them near the enemy keep.</li>
+          <li><b>Win</b> by breaking through the keep and killing the enemy king. Do it fast and accurately for a higher score.</li>
+          <li><b>Camera</b>: scroll to zoom, drag with right mouse (or two fingers) to pan, 🔭 refits the field.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div id="connection" class="hidden">Reconnecting…</div>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>
