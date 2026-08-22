@@ -17,11 +17,13 @@ import type { Entity, GameSummary, MatchSnapshot, RoomInfo, Side } from '../shar
 
 export interface UiHooks {
   practice(difficulty: number): void;
+  hotseat(): void;
   create(): void;
   quick(): void;
   join(code: string): void;
   ready(value: boolean): void;
   leave(): void;
+  handoffReady(): void;
   selectGun(id: number): void;
   aim(elevation: number, power: number): void;
   chooseAmmo(ammo: AmmoId): void;
@@ -78,6 +80,7 @@ export class Ui {
     });
 
     $('menu-practice').onclick = () => this.hooks.practice(this.difficulty);
+    $('menu-hotseat').onclick = () => this.hooks.hotseat();
     $('menu-create').onclick = () => this.hooks.create();
     $('menu-quick').onclick = () => this.hooks.quick();
     $<HTMLFormElement>('join-form').onsubmit = (e) => {
@@ -186,6 +189,11 @@ export class Ui {
 
     $('over-rematch').onclick = () => this.hooks.rematch();
     $('over-leave').onclick = () => this.hooks.leave();
+
+    $('handoff-continue').onclick = () => {
+      $('handoff').classList.add('hidden');
+      this.hooks.handoffReady();
+    };
   }
 
   get playerName(): string {
@@ -231,6 +239,13 @@ export class Ui {
     $('lobby').classList.add('hidden');
     $('over').classList.add('hidden');
     $('hud').classList.remove('hidden');
+  }
+
+  /** Hot-seat only: covers the field between turns so the next gunner doesn't see the last aim. */
+  showHandoff(name: string, side: Side): void {
+    $('handoff-title').textContent = `Pass the device to ${name}`;
+    $('handoff-title').style.color = side === 0 ? 'var(--red)' : 'var(--blue)';
+    $('handoff').classList.remove('hidden');
   }
 
   // -------------------------------------------------------------------- hud
