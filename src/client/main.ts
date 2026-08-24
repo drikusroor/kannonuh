@@ -41,6 +41,16 @@ import { Net } from './net.ts';
 import { Renderer, type Ghost, type LiveProjectile, type Scene } from './render.ts';
 import { Ui, type ViewModel } from './ui.ts';
 
+interface AimState {
+  elevation: number;
+  power: number;
+  ammo: AmmoId;
+}
+
+function defaultAim(): AimState {
+  return { elevation: 45, power: 62, ammo: 'round' };
+}
+
 interface Replay {
   result: ShotResult;
   after: MatchSnapshot;
@@ -75,7 +85,10 @@ const app = {
   terrain: new Array<number>(WORLD_W / 5).fill(WORLD_H * 0.7),
   you: -1 as Side | -1,
   selected: 0,
-  aim: { elevation: 45, power: 62, ammo: 'round' as AmmoId },
+  aim: defaultAim(),
+  // Hot-seat only: each side's own dials, so passing the device doesn't hand
+  // the next gunner your elevation, powder charge and ammo choice.
+  aimBySide: [defaultAim(), defaultAim()] as [AimState, AimState],
   replay: null as Replay | null,
   ghosts: [] as Ghost[],
   placing: null as PlacingIntent | null,
@@ -254,6 +267,7 @@ function onMessage(msg: ServerMsg): void {
 
     case 'match': {
       app.you = msg.you;
+      app.aimBySide = [defaultAim(), defaultAim()];
       applyState(msg.state, true);
       app.ghosts = [];
       app.displayY.clear();
@@ -345,6 +359,11 @@ function showOver(): void {
 function applyState(state: MatchSnapshot, full = false): void {
   const before = app.state;
   app.state = state;
+  if (app.hotseat && before && before.turn !== state.turn) {
+    // Stash the outgoing gunner's dials and hand the incoming one their own back.
+    app.aimBySide[before.turn] = { ...app.aim };
+    app.aim = { ...app.aimBySide[state.turn] };
+  }
   // Hot-seat has no fixed "you" — control follows whoever's turn it is.
   if (app.hotseat) app.you = state.turn;
   if (state.world.terrain) {
