@@ -24,8 +24,16 @@ bun run start        # builds the client, serves on http://localhost:3000
 Then open <http://localhost:3000>.
 
 - **Practice siege** — play the gunnery bot (three difficulties).
+- **Hot-seat** — two gunners, one screen. Pass the device each turn; a
+  "pass the device" screen covers the field so the incoming gunner doesn't
+  see the outgoing one's aim.
 - **Create battle** — get a four letter code, send it to a friend.
 - **Quick match** — drop into whoever is waiting.
+
+Practice and Hot-seat run the whole simulation locally in the browser — no
+server, no WebSocket — so they also work from a static host like GitHub
+Pages. Create battle and Quick match are real multiplayer and need a running
+Bun server (see Deploying, below).
 
 ### Controls
 
@@ -157,6 +165,20 @@ bun install --production
 bun run build:client
 PORT=8080 bun src/server/index.ts
 ```
+
+### GitHub Pages (Practice & Hot-seat only)
+
+`.github/workflows/deploy-pages.yml` builds the client with Bun and publishes
+`public/` to GitHub Pages on every push to `main` (and on demand via the
+Actions tab). One-time setup: in the repo's **Settings → Pages**, set
+**Source** to **GitHub Actions**.
+
+GitHub Pages only serves static files, so there is no Bun server and no
+WebSocket endpoint there. Practice siege and Hot-seat don't need one — they
+run entirely client-side — so they work fine on the deployed Pages site.
+Create battle and Quick match are real two-device multiplayer and require an
+actual Bun server, so leave them off the Pages build (or point them at a
+separately hosted server) rather than expecting them to work on Pages alone.
 
 ---
 

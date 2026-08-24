@@ -12,6 +12,7 @@ import {
 } from '../shared/constants.ts';
 import { applyCrater, surfaceAt } from '../shared/terrain.ts';
 import type {
+  ClientMsg,
   Entity,
   GameSummary,
   MatchSnapshot,
@@ -35,6 +36,7 @@ import {
   shake,
   worldToScreen,
 } from './fx.ts';
+import { LocalGame } from './local.ts';
 import { Net } from './net.ts';
 import { Renderer, type Ghost, type LiveProjectile, type Scene } from './render.ts';
 import { Ui, type ViewModel } from './ui.ts';
@@ -69,6 +71,7 @@ const app = {
   discord: null as DiscordContext | null,
   room: null as RoomInfo | null,
   state: null as MatchSnapshot | null,
+  hotseat: false,
   terrain: new Array<number>(WORLD_W / 5).fill(WORLD_H * 0.7),
   you: -1 as Side | -1,
   selected: 0,
@@ -85,28 +88,42 @@ const app = {
 const ui = new Ui({
   practice: (difficulty) => {
     sound.unlock();
-    net.send({ t: 'create', mode: 'practice', difficulty });
+    startLocal('practice', difficulty as 0 | 1 | 2);
+  },
+  hotseat: () => {
+    sound.unlock();
+    startLocal('hotseat');
   },
   create: () => {
     sound.unlock();
+    onlineIntent = true;
     net.send({ t: 'create', mode: 'versus' });
   },
   quick: () => {
     sound.unlock();
+    onlineIntent = true;
     net.send({ t: 'quick' });
   },
   join: (code) => {
     sound.unlock();
+    onlineIntent = true;
     net.send({ t: 'join', code });
   },
-  ready: (value) => net.send({ t: 'ready', value }),
+  ready: (value) => send({ t: 'ready', value }),
   leave: () => {
-    net.send({ t: 'leave' });
+    const wasLocal = stopLocal();
+    if (!wasLocal) net.send({ t: 'leave' });
     app.state = null;
     app.room = null;
     app.you = -1;
+    app.hotseat = false;
     fx.clear();
     ui.showMenu();
+  },
+  handoffReady: () => {
+    sound.unlock();
+    focusOwnGun();
+    sync();
   },
   selectGun: (id) => {
     app.selected = id;
@@ -139,15 +156,15 @@ const ui = new Ui({
   },
   fire: () => doFire(),
   endTurn: () => {
-    net.send({ t: 'endTurn' });
+    send({ t: 'endTurn' });
     sound.click();
   },
-  buyAmmo: (ammo) => net.send({ t: 'buyAmmo', ammo }),
+  buyAmmo: (ammo) => send({ t: 'buyAmmo', ammo }),
   buyCannon: (cannon) => startPlacing({ kind: 'cannon', cannon, ...cannonBox(cannon), label: `Place your ${CANNONS[cannon].name}` }),
-  buyUpgrade: (cannonId, upgrade) => net.send({ t: 'buyUpgrade', cannonId, upgrade: upgrade as UpgradeId }),
+  buyUpgrade: (cannonId, upgrade) => send({ t: 'buyUpgrade', cannonId, upgrade: upgrade as UpgradeId }),
   build: (build) => {
     if (build === 'repair') {
-      net.send({ t: 'build', build, x: 0, y: 0 });
+      send({ t: 'build', build, x: 0, y: 0 });
       return;
     }
     startPlacing({ kind: 'build', build, ...buildBox(build), label: `Place your ${BUILDS[build].name}` });
@@ -156,10 +173,10 @@ const ui = new Ui({
     app.placing = null;
     ui.hidePlacing();
   },
-  chat: (text) => net.send({ t: 'chat', text }),
-  emote: (icon) => net.send({ t: 'emote', icon }),
-  rematch: () => net.send({ t: 'rematch' }),
-  resign: () => net.send({ t: 'resign' }),
+  chat: (text) => send({ t: 'chat', text }),
+  emote: (icon) => send({ t: 'emote', icon }),
+  rematch: () => send({ t: 'rematch' }),
+  resign: () => send({ t: 'resign' }),
   toggleSound: () => {
     sound.unlock();
     sound.setEnabled(!sound.enabled);
@@ -179,7 +196,35 @@ const ui = new Ui({
   },
 });
 
-const net = new Net(onMessage, (up) => ui.connection(up));
+// Only nag about a dropped connection once the player has actually tried to
+// play online — otherwise a server-less deploy (e.g. GitHub Pages) shows a
+// permanent "Reconnecting…" banner for a socket nobody asked for.
+let onlineIntent = false;
+const net = new Net(onMessage, (up) => {
+  if (onlineIntent) ui.connection(up);
+});
+
+let localGame: LocalGame | null = null;
+
+/** Routes an action to whichever transport is live: the local engine, or the network. */
+function send(msg: ClientMsg): void {
+  if (localGame) localGame.send(msg);
+  else net.send(msg);
+}
+
+function startLocal(mode: 'practice' | 'hotseat', difficulty: 0 | 1 | 2 = 1): void {
+  localGame?.destroy();
+  app.hotseat = mode === 'hotseat';
+  localGame = new LocalGame(mode, difficulty, app.name || ui.playerName, onMessage);
+}
+
+/** Tears down a running local game, if any. Returns whether one was running. */
+function stopLocal(): boolean {
+  if (!localGame) return false;
+  localGame.destroy();
+  localGame = null;
+  return true;
+}
 
 // ---------------------------------------------------------------------------
 // Server messages
@@ -188,6 +233,8 @@ const net = new Net(onMessage, (up) => ui.connection(up));
 function onMessage(msg: ServerMsg): void {
   switch (msg.t) {
     case 'welcome':
+      // Only a real server ever sends this — safe to start caring about connection drops.
+      onlineIntent = true;
       app.uid = msg.uid;
       localStorage.setItem('kannonuh.uid', msg.uid);
       app.name = msg.name;
@@ -298,6 +345,8 @@ function showOver(): void {
 function applyState(state: MatchSnapshot, full = false): void {
   const before = app.state;
   app.state = state;
+  // Hot-seat has no fixed "you" — control follows whoever's turn it is.
+  if (app.hotseat) app.you = state.turn;
   if (state.world.terrain) {
     app.terrain = state.world.terrain.slice();
     camBounds(cam, app.terrain);
@@ -315,14 +364,19 @@ function applyState(state: MatchSnapshot, full = false): void {
 }
 
 function onTurnChanged(state: MatchSnapshot): void {
+  const gun = myGuns().find((g) => !g.firedThisTurn);
+  if (gun) {
+    app.selected = gun.id;
+    app.aim.elevation = clampElevation(gun, app.aim.elevation);
+  }
+  if (app.hotseat) {
+    // Cover the field before revealing the next gunner's battery.
+    ui.showHandoff(state.players[state.turn].name, state.turn);
+    return;
+  }
   if (state.turn === app.you) {
     ui.banner('Your volley', 1200);
-    const gun = myGuns().find((g) => !g.firedThisTurn);
-    if (gun) {
-      app.selected = gun.id;
-      app.aim.elevation = clampElevation(gun, app.aim.elevation);
-      focusOwnGun();
-    }
+    if (gun) focusOwnGun();
   }
 }
 
@@ -402,7 +456,7 @@ function pushAim(): void {
   if (now - app.lastAimSent < 90) return;
   app.lastAimSent = now;
   if (app.you === -1 || !app.state || app.state.turn !== app.you) return;
-  net.send({
+  send({
     t: 'aim',
     cannonId: app.selected,
     elevation: app.aim.elevation,
@@ -424,7 +478,7 @@ function doFire(): void {
     }
     app.selected = next.id;
   }
-  net.send({
+  send({
     t: 'fire',
     cannonId: app.selected,
     elevation: app.aim.elevation,
@@ -448,8 +502,8 @@ function confirmPlacing(worldX: number): void {
     sound.deny();
     return;
   }
-  if (intent.kind === 'cannon') net.send({ t: 'buyCannon', cannon: intent.cannon!, x: worldX });
-  else net.send({ t: 'build', build: intent.build!, x: worldX, y: 0 });
+  if (intent.kind === 'cannon') send({ t: 'buyCannon', cannon: intent.cannon!, x: worldX });
+  else send({ t: 'build', build: intent.build!, x: worldX, y: 0 });
   app.placing = null;
   ui.hidePlacing();
   sound.coin();
